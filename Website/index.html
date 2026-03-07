@@ -7,65 +7,64 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main class="page">
-    <header class="hero">
-      <div class="hero-grid">
-        <div class="hero-copy">
-          <p class="eyebrow">VPM Repository</p>
-          <h1>{{ listingInfo.Name }}</h1>
-          {{ if listingInfo.Description }}<p class="lead">{{ listingInfo.Description }}</p>{{ end }}
-          <div class="hero-note">
-            Add this repository to VRChat Creator Companion and install LACE from your project package list.
-          </div>
-          <div class="links">
-            <button class="button primary" id="addToVccButton" type="button">Add to VCC</button>
-            <button class="button" id="copyRepoUrlButton" type="button">Copy Repository URL</button>
-            <a class="button subtle" href="{{ listingInfo.Url }}" target="_blank" rel="noreferrer">Open index.json</a>
-            {{ if listingInfo.InfoLink.Url }}<a class="button subtle" href="{{ listingInfo.InfoLink.Url }}" target="_blank" rel="noreferrer">{{ if listingInfo.InfoLink.Text; listingInfo.InfoLink.Text; else; "More info"; end }}</a>{{ end }}
-          </div>
-        </div>
-        <aside class="repo-panel">
-          <p class="panel-label">Repository URL</p>
-          <div class="repo-url-box">
-            <code id="repoUrlText">{{ listingInfo.Url }}</code>
-          </div>
-          <p class="panel-help">If VCC does not open automatically, copy this URL and add it from Settings > Packages > Add Repository.</p>
-          <p class="copy-status" id="copyStatus" aria-live="polite"></p>
-        </aside>
+  <div class="page">
+    <header class="header">
+      <span class="label">VPM Package Repository</span>
+      <h1>{{ listingInfo.Name }}</h1>
+      {{~ if listingInfo.Description ~}}
+      <p class="desc">{{ listingInfo.Description }}</p>
+      {{~ end ~}}
+
+      <div class="actions">
+        <a class="btn btn-primary" id="addToVcc"
+           href="vcc://vpm/addRepo?url={{ listingInfo.Url }}">Add to VCC</a>
+        <button class="btn btn-secondary" id="copyUrl" type="button">Copy URL</button>
       </div>
+
+      <div class="url-row">
+        <code class="url-text" id="urlText">{{ listingInfo.Url }}</code>
+        <span class="toast" id="toast"></span>
+      </div>
+
+      <p class="hint">VCC が開かない場合は上の URL をコピーし、Settings &gt; Packages &gt; Add Repository から追加してください。</p>
     </header>
 
-    <section class="section">
-      <div class="section-header">
-        <div>
-          <p class="section-kicker">Available Package</p>
-          <h2>Packages</h2>
+    <section class="packages">
+      <h2>Packages</h2>
+      {{~ for package in packages ~}}
+      <div class="card">
+        <div class="card-top">
+          <div>
+            <h3>{{ package.DisplayName }}</h3>
+            <span class="pkg-id">{{ package.Name }}</span>
+          </div>
+          <span class="version">v{{ package.Version }}</span>
+        </div>
+        <p class="pkg-desc">{{ package.Description }}</p>
+        <div class="card-foot">
+          <div class="card-meta">
+            {{~ if package.Author.Url ~}}
+            <a href="{{ package.Author.Url }}" target="_blank" rel="noreferrer">{{ package.Author.Name }}</a>
+            {{~ else ~}}
+            <span>{{ package.Author.Name }}</span>
+            {{~ end ~}}
+          </div>
+          <div class="card-actions">
+            <a class="btn btn-primary btn-sm add-vcc"
+               href="vcc://vpm/addRepo?url={{ listingInfo.Url }}">Add to VCC</a>
+            <a class="btn btn-secondary btn-sm" href="{{ package.ZipUrl }}" target="_blank" rel="noreferrer">ZIP</a>
+          </div>
         </div>
       </div>
-      <div class="package-list">
-        {{ for package in packages }}
-        <article class="card">
-          <div class="card-header">
-            <div>
-              <h3>{{ package.DisplayName }}</h3>
-              <p class="package-id">{{ package.Name }}</p>
-            </div>
-            <span class="badge">{{ package.Version }}</span>
-          </div>
-          <p class="description">{{ package.Description }}</p>
-          <div class="meta">
-            <span>{{ package.Type }}</span>
-            {{ if package.Author.Url }}<a href="{{ package.Author.Url }}" target="_blank" rel="noreferrer">{{ package.Author.Name }}</a>{{ else }}<span>{{ package.Author.Name }}</span>{{ end }}
-          </div>
-          <div class="actions">
-            <button class="button primary add-to-vcc-button" type="button">Add to VCC</button>
-            <a class="button subtle" href="{{ package.ZipUrl }}" target="_blank" rel="noreferrer">Download ZIP</a>
-          </div>
-        </article>
-        {{ end }}
-      </div>
+      {{~ end ~}}
     </section>
-  </main>
+
+    {{~ if listingInfo.InfoLink.Url ~}}
+    <footer class="footer">
+      <a href="{{ listingInfo.InfoLink.Url }}" target="_blank" rel="noreferrer">{{ if listingInfo.InfoLink.Text; listingInfo.InfoLink.Text; else; "GitHub"; end }}</a>
+    </footer>
+    {{~ end ~}}
+  </div>
   <script src="app.js"></script>
 </body>
 </html>
