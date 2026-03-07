@@ -1,9 +1,9 @@
 {
   "name": "dev.lace",
   "displayName": "LACE - Logic-driven Avatar Costume Engine",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "unity": "2022.3",
-  "description": "VRChat アバター向け NDMF プラグイン。衣装パーツの ON/OFF トグルと論理演算ベースの条件付き制御を非破壊で実現します。",
+  "description": "VRChat アバター向け NDMF プラグイン。ダッシュボード中心のUIで、衣装トグルと論理条件ベースの制御を非破壊で構築できます。",
   "author": {
     "name": "LACE"
   },

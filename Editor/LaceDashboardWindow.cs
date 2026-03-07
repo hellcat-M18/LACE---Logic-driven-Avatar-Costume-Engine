@@ -24,6 +24,7 @@ namespace Lace.Editor
         // ─── アイテム一覧 ───
         private CostumeItem[] _items;
         private Vector2 _listScroll;
+        private Vector2 _detailScroll;
         private CostumeItem _expandedItem;
 
         // ─── 展開中アイテムの SerializedObject ───
@@ -40,13 +41,12 @@ namespace Lace.Editor
         private SerializedProperty _sp_target;
         private SerializedProperty _sp_blendShapeNames;
         private SerializedProperty _sp_matchValue;
-        private SerializedProperty _sp_matchActive;
         private SerializedProperty _sp_unmatchValue;
-        private SerializedProperty _sp_unmatchActive;
 
         // ─── 条件エディタの UIステート ───
         private List<List<CondClause>> _conditionGroups;
         private CostumeItem _conditionGroupsOwner;
+        private bool _showAdditionalConditions;
 
         // ─── 新規作成フォーム ───
         private bool _showCreateForm;
@@ -95,11 +95,10 @@ namespace Lace.Editor
             {
                 var desc = sel.GetComponentInParent<VRCAvatarDescriptor>();
                 if (desc != null && desc != _selectedAvatar)
-                {
                     SetAvatar(desc);
-                    Repaint();
-                }
             }
+
+            Repaint();
         }
 
         // ─── データ更新 ───
@@ -133,6 +132,17 @@ namespace Lace.Editor
                 _items = _selectedAvatar.GetComponentsInChildren<CostumeItem>(true);
             else
                 _items = Array.Empty<CostumeItem>();
+
+            if (_expandedItem != null && Array.IndexOf(_items, _expandedItem) < 0)
+            {
+                _expandedItem = null;
+                _expandedSO = null;
+                _conditionGroups = null;
+                _conditionGroupsOwner = null;
+            }
+
+            if (_expandedItem == null && _items.Length > 0)
+                _expandedItem = _items[0];
         }
 
         private List<MenuEntry> GetMenuEntries()
@@ -164,9 +174,7 @@ namespace Lace.Editor
             _sp_target            = _expandedSO.FindProperty("target");
             _sp_blendShapeNames   = _expandedSO.FindProperty("blendShapeNames");
             _sp_matchValue        = _expandedSO.FindProperty("matchValue");
-            _sp_matchActive       = _expandedSO.FindProperty("matchActive");
             _sp_unmatchValue      = _expandedSO.FindProperty("unmatchValue");
-            _sp_unmatchActive     = _expandedSO.FindProperty("unmatchActive");
         }
 
         // ─── GUI ───
@@ -182,9 +190,26 @@ namespace Lace.Editor
                 return;
             }
 
+            DrawMainLayout();
+        }
+
+        private void DrawMainLayout()
+        {
+            EditorGUILayout.BeginHorizontal();
+
+            EditorGUILayout.BeginVertical(GUILayout.Width(272));
             DrawItemList();
             EditorGUILayout.Space(4);
             DrawCreateForm();
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.Space(6);
+
+            EditorGUILayout.BeginVertical();
+            DrawDetailPane();
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.EndHorizontal();
         }
 
         private void DrawToolbar()
@@ -216,19 +241,15 @@ namespace Lace.Editor
 
         private void DrawItemList()
         {
-            // ヘッダー
-            EditorGUILayout.BeginHorizontal(EditorStyles.helpBox);
-            GUILayout.Label("パラメータ名", EditorStyles.miniBoldLabel, GUILayout.Width(130));
-            GUILayout.Label("タイプ", EditorStyles.miniBoldLabel, GUILayout.Width(80));
-            GUILayout.Label("インストール先", EditorStyles.miniBoldLabel, GUILayout.Width(120));
-            GUILayout.Label("条件サマリー", EditorStyles.miniBoldLabel);
-            GUILayout.Label("", GUILayout.Width(52)); // 操作列
-            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            EditorGUILayout.LabelField("CostumeItem Tabs", EditorStyles.boldLabel);
+            EditorGUILayout.Space(2);
 
             if (_items == null || _items.Length == 0)
             {
                 EditorGUILayout.LabelField("　CostumeItem がありません。",
                     EditorStyles.centeredGreyMiniLabel);
+                EditorGUILayout.EndVertical();
                 return;
             }
 
@@ -250,64 +271,74 @@ namespace Lace.Editor
             {
                 if (item == null) continue;
 
-                bool isExpanded = _expandedItem == item;
+                bool isSelected = _expandedItem == item;
 
-                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-
-                // ─── 行ヘッダー ───
-                EditorGUILayout.BeginHorizontal();
-
-                // 展開トグル
-                var arrow = isExpanded ? "▼" : "▶";
-                if (GUILayout.Button(arrow, EditorStyles.miniLabel, GUILayout.Width(16)))
+                var rowStyle = new GUIStyle(EditorStyles.helpBox)
                 {
-                    _expandedItem = isExpanded ? null : item;
-                    _expandedSO = null; // 再キャッシュさせる
-                    _conditionGroups = null;
-                    _conditionGroupsOwner = null;
+                    alignment = TextAnchor.MiddleLeft,
+                    fixedHeight = 0,
+                    wordWrap = true,
+                    richText = true,
+                    fontStyle = isSelected ? FontStyle.Bold : FontStyle.Normal,
+                    padding = new RectOffset(7, 7, 5, 5),
+                    margin = new RectOffset(0, 0, 0, 4),
+                };
+
+                if (isSelected)
+                {
+                    rowStyle.normal.textColor = Color.white;
+                    rowStyle.hover.textColor = Color.white;
                 }
 
-                // パラメータ名（同名の場合はインデックス付き）（クリックで Inspector 選択）
                 var pnKey = string.IsNullOrEmpty(item.parameterName) ? "(未設定)" : item.parameterName;
                 paramNameSeen[pnKey] = paramNameSeen.TryGetValue(pnKey, out int seen) ? seen + 1 : 1;
                 var paramLabel = paramNameCount[pnKey] > 1
                     ? $"{pnKey} [{paramNameSeen[pnKey]}]"
                     : pnKey;
-                if (GUILayout.Button(paramLabel, EditorStyles.linkLabel, GUILayout.Width(120)))
+
+                var typeLabel = item.target == RuleTarget.GameObject ? "GameObject" : "BlendShape";
+                var cond = AnimatorGenerator.GetEffectiveCondition(item);
+                var summary = cond != null ? ConditionToStringPlain(cond) : "常に動作";
+                var buttonLabel = isSelected
+                    ? $"<size=13><b>{paramLabel}</b></size>\n{typeLabel}\n{summary}"
+                    : $"<size=13><b>{paramLabel}</b></size>\n{typeLabel}\n{summary}";
+                const float tabHeight = 54f;
+
+                EditorGUILayout.BeginHorizontal();
+
+                var accentColor = isSelected
+                    ? new Color(0.24f, 0.55f, 0.95f, 1f)
+                    : new Color(0.28f, 0.28f, 0.28f, 1f);
+                var previousBackground = GUI.backgroundColor;
+                GUI.backgroundColor = accentColor;
+                GUILayout.Box(GUIContent.none, GUILayout.Width(4), GUILayout.Height(tabHeight));
+                GUI.backgroundColor = previousBackground;
+
+                previousBackground = GUI.backgroundColor;
+                if (isSelected)
+                    GUI.backgroundColor = new Color(0.28f, 0.48f, 0.78f, 1f);
+                else
+                    GUI.backgroundColor = new Color(0.85f, 0.85f, 0.85f, 1f);
+
+                if (GUILayout.Button(buttonLabel, rowStyle, GUILayout.ExpandWidth(true), GUILayout.MinHeight(tabHeight)))
                 {
+                    _expandedItem = item;
+                    _expandedSO = null;
+                    _conditionGroups = null;
+                    _conditionGroupsOwner = null;
                     Selection.activeGameObject = item.gameObject;
                     EditorGUIUtility.PingObject(item.gameObject);
                 }
 
-                // タイプ
-                GUILayout.Label(item.target == RuleTarget.GameObject ? "GameObject" : "BlendShape",
-                    GUILayout.Width(80));
+                GUI.backgroundColor = previousBackground;
 
-                // インストール先
-                var installLabel = item.installTargetMenu != null
-                    ? item.installTargetMenu.name
-                    : "(ルート)";
-                GUILayout.Label(installLabel, GUILayout.Width(100));
-
-                // 条件サマリー
-                var cond = AnimatorGenerator.GetEffectiveCondition(item);
-                var summary = cond != null ? ConditionToStringPlain(cond) : "常に動作";
-                GUILayout.Label(summary, EditorStyles.miniLabel);
-
-                // 削除ボタン
                 if (GUILayout.Button("×", GUILayout.Width(22)))
                     toDelete = item;
-
                 EditorGUILayout.EndHorizontal();
-
-                // ─── 展開: 全設定エディタ ───
-                if (isExpanded)
-                    DrawExpandedItemEditor(item);
-
-                EditorGUILayout.EndVertical();
             }
 
             EditorGUILayout.EndScrollView();
+            EditorGUILayout.EndVertical();
 
             // 削除実行（ループ外）
             if (toDelete != null)
@@ -321,6 +352,37 @@ namespace Lace.Editor
                     RefreshItems();
                 }
             }
+        }
+
+        private void DrawDetailPane()
+        {
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+
+            if (_expandedItem == null)
+            {
+                EditorGUILayout.LabelField("設定", EditorStyles.boldLabel);
+                EditorGUILayout.Space(4);
+                EditorGUILayout.HelpBox("左の一覧から CostumeItem を選択してください。", MessageType.Info);
+                EditorGUILayout.EndVertical();
+                return;
+            }
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField($"設定: {_expandedItem.gameObject.name}", EditorStyles.boldLabel);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("選択", GUILayout.Width(56)))
+            {
+                Selection.activeGameObject = _expandedItem.gameObject;
+                EditorGUIUtility.PingObject(_expandedItem.gameObject);
+            }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.Space(4);
+            _detailScroll = EditorGUILayout.BeginScrollView(_detailScroll);
+            DrawExpandedItemEditor(_expandedItem);
+            EditorGUILayout.EndScrollView();
+
+            EditorGUILayout.EndVertical();
         }
 
         // ─── 新規作成フォーム ───
@@ -337,17 +399,31 @@ namespace Lace.Editor
 
                 var sel = Selection.gameObjects;
                 int targetCount = 0;
+                var selectedNames = new List<string>();
                 if (sel != null)
                 {
                     foreach (var go in sel)
                     {
                         if (go != null && IsDescendantOf(go.transform, _selectedAvatar.transform))
+                        {
                             targetCount++;
+                            selectedNames.Add(go.name);
+                        }
                     }
                 }
 
-                using (new EditorGUI.DisabledScope(true))
-                    EditorGUILayout.IntField("選択中の対象数", targetCount);
+                EditorGUILayout.LabelField("選択中の対象", EditorStyles.miniBoldLabel);
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox, GUILayout.MinHeight(Mathf.Max(38f, selectedNames.Count * 18f)));
+                if (selectedNames.Count > 0)
+                {
+                    foreach (var selectedName in selectedNames)
+                        EditorGUILayout.LabelField("- " + selectedName, EditorStyles.wordWrappedMiniLabel);
+                }
+                else
+                {
+                    EditorGUILayout.LabelField("(選択なし)", EditorStyles.centeredGreyMiniLabel);
+                }
+                EditorGUILayout.EndVertical();
 
                 _newItemName = EditorGUILayout.TextField(
                     new GUIContent("メニュー名", "空欄なら選択オブジェクトの名前を使用します。"),
@@ -458,10 +534,6 @@ namespace Lace.Editor
             _expandedSO.ApplyModifiedProperties();
 
             DrawSection_Condition(item);
-
-            // Re-fetch for trigger section
-            _expandedSO.Update();
-            DrawSection_Trigger();
             _expandedSO.ApplyModifiedProperties();
 
             EditorGUI.indentLevel--;
@@ -590,14 +662,14 @@ namespace Lace.Editor
 
             if (allShapes.Count == 0)
             {
-                EditorGUILayout.HelpBox("ブレンドシェイプがありません。", MessageType.Info);
+                EditorGUILayout.HelpBox("シェイプキーがありません。", MessageType.Info);
                 return;
             }
 
             int selectedCount = _sp_blendShapeNames.arraySize;
 
             EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.PrefixLabel("ブレンドシェイプ");
+            EditorGUILayout.PrefixLabel("シェイプキー");
             if (GUILayout.Button($"選択... ({selectedCount}/{allShapes.Count})", GUILayout.MinWidth(100)))
                 BlendShapePickerWindow.Show(_expandedSO, _sp_blendShapeNames, renderers);
             EditorGUILayout.EndHorizontal();
@@ -610,13 +682,26 @@ namespace Lace.Editor
                 EditorGUILayout.LabelField(string.Join(", ", names),
                     EditorStyles.wordWrappedMiniLabel);
             }
+
+            EditorGUILayout.Space(6);
+            EditorGUILayout.LabelField("値の設定", EditorStyles.miniBoldLabel);
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.PrefixLabel("条件に合致するとき");
+            _sp_matchValue.floatValue = EditorGUILayout.Slider(_sp_matchValue.floatValue, 0f, 100f);
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.PrefixLabel("条件に合致しないとき");
+            _sp_unmatchValue.floatValue = EditorGUILayout.Slider(_sp_unmatchValue.floatValue, 0f, 100f);
+            EditorGUILayout.EndHorizontal();
         }
 
         // ─ セクション3: 条件（自然言語ビルダー） ─
 
         private void DrawSection_Condition(CostumeItem item)
         {
-            EditorGUILayout.LabelField("3. 条件式", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("3. 切り替え条件", EditorStyles.boldLabel);
             EditorGUI.indentLevel++;
 
             // 条件サマリー（自然な日本語・リッチテキスト）
@@ -634,6 +719,44 @@ namespace Lace.Editor
                 EditorGUILayout.LabelField(trimmed, richStyle);
             }
 
+            EditorGUILayout.Space(4);
+
+            if (item.generateMenuItem && !string.IsNullOrEmpty(item.parameterName))
+            {
+                EditorGUILayout.LabelField("固定条件", EditorStyles.miniBoldLabel);
+                EditorGUILayout.BeginHorizontal();
+                GUILayout.Space(EditorGUI.indentLevel * 15f);
+                using (new EditorGUI.DisabledScope(true))
+                {
+                    EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                    EditorGUILayout.BeginHorizontal();
+                    EditorGUILayout.Popup(1, new[] { "(選択...)", item.parameterName }, GUILayout.Width(130));
+                    GUILayout.Label("が", GUILayout.Width(14));
+                    GUILayout.Toolbar(0, new[] { "ON", "OFF" }, GUILayout.Width(80));
+                    GUILayout.Label("のとき", GUILayout.Width(40));
+                    EditorGUILayout.EndHorizontal();
+                    EditorGUILayout.EndVertical();
+                }
+                EditorGUILayout.EndHorizontal();
+                EditorGUILayout.LabelField("この条件はこのアイテム自身の ON/OFF によって自動で決まります。",
+                    EditorStyles.centeredGreyMiniLabel);
+                EditorGUILayout.Space(4);
+            }
+
+            _showAdditionalConditions = EditorGUILayout.Foldout(
+                _showAdditionalConditions,
+                "追加条件",
+                true);
+
+            if (!_showAdditionalConditions)
+            {
+                EditorGUI.indentLevel--;
+                EditorGUILayout.Space(4);
+                return;
+            }
+
+            EditorGUILayout.LabelField("他のアイテムとの組み合わせ条件を設定します。",
+                EditorStyles.centeredGreyMiniLabel);
             EditorGUILayout.Space(4);
 
             // 他アイテムのパラメータ名一覧を収集（ドロップダウン用）
@@ -665,7 +788,7 @@ namespace Lace.Editor
                     EditorGUILayout.Space(2);
                     EditorGUILayout.BeginHorizontal();
                     GUILayout.Space(EditorGUI.indentLevel * 15f);
-                    EditorGUILayout.LabelField("── または ──",
+                    EditorGUILayout.LabelField("── いずれかを満たす ──",
                         EditorStyles.centeredGreyMiniLabel);
                     EditorGUILayout.EndHorizontal();
                     EditorGUILayout.Space(2);
@@ -675,6 +798,9 @@ namespace Lace.Editor
                 GUILayout.Space(EditorGUI.indentLevel * 15f);
                 EditorGUILayout.BeginVertical(EditorStyles.helpBox);
                 var group = groups[gi];
+
+                EditorGUILayout.LabelField("すべて満たす", EditorStyles.miniBoldLabel);
+                EditorGUILayout.Space(2);
 
                 // グループ内の各条件行を自然言語で表示
                 for (int ci = 0; ci < group.Count; ci++)
@@ -690,7 +816,7 @@ namespace Lace.Editor
                     EditorGUILayout.BeginHorizontal();
 
                     // パラメータ選択ドロップダウン
-                    var dropdownItems = new List<string> { "(選択...)" };
+                    var dropdownItems = new List<string> { "(条件を選択)" };
                     dropdownItems.AddRange(otherParams);
                     // 未登録パラメータの場合も表示
                     if (!string.IsNullOrEmpty(clause.parameterName)
@@ -728,16 +854,22 @@ namespace Lace.Editor
                     // 「のとき」（行末ラベル）
                     //GUILayout.Label("のとき", GUILayout.Width(38));
 
-                    // 削除ボタン（グループに2つ以上の条件がある場合、または全体に複数グループある場合）
-                    if (group.Count > 1 || groups.Count > 1)
+                    // 削除ボタン（1件だけでも削除可能）
+                    if (GUILayout.Button("×", GUILayout.Width(22)))
                     {
-                        if (GUILayout.Button("×", GUILayout.Width(22)))
+                        if (group.Count > 1)
                         {
                             group.RemoveAt(ci);
-                            if (group.Count == 0)
-                                groups.RemoveAt(gi);
-                            changed = true;
                         }
+                        else if (groups.Count > 1)
+                        {
+                            groups.RemoveAt(gi);
+                        }
+                        else
+                        {
+                            group.Clear();
+                        }
+                        changed = true;
                     }
 
                     EditorGUILayout.EndHorizontal();
@@ -746,7 +878,7 @@ namespace Lace.Editor
                 // グループ内に条件を追加
                 EditorGUILayout.BeginHorizontal();
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button("+ 条件を追加", EditorStyles.miniButton, GUILayout.Width(80)))
+                if (GUILayout.Button("+ パターンに条件を追加", EditorStyles.miniButton, GUILayout.Width(150)))
                 {
                     group.Add(new CondClause { parameterName = "", expectedValue = true });
                     changed = true;
@@ -754,7 +886,7 @@ namespace Lace.Editor
                 // グループ削除（複数グループ時のみ + グループ全体を消す）
                 if (groups.Count > 1)
                 {
-                    if (GUILayout.Button("グループ削除", EditorStyles.miniButton, GUILayout.Width(80)))
+                    if (GUILayout.Button("パターンを削除", EditorStyles.miniButton, GUILayout.Width(120)))
                     {
                         groups.RemoveAt(gi);
                         changed = true;
@@ -773,7 +905,7 @@ namespace Lace.Editor
             EditorGUILayout.Space(2);
             EditorGUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("+ 「または」を追加", EditorStyles.miniButton, GUILayout.Width(130)))
+            if (GUILayout.Button("+ 別パターンを追加", EditorStyles.miniButton, GUILayout.Width(130)))
             {
                 groups.Add(new List<CondClause>
                 {
@@ -926,59 +1058,6 @@ namespace Lace.Editor
             if (cond.type == ConditionType.Param && string.IsNullOrEmpty(cond.parameterName))
                 return true;
             return false;
-        }
-
-        // ─ セクション4: 表示条件 / 発動条件 ─
-
-        private void DrawSection_Trigger()
-        {
-            var targetType = (RuleTarget)_sp_target.enumValueIndex;
-            EditorGUILayout.LabelField(
-                "4. " + (targetType == RuleTarget.GameObject ? "表示条件" : "発動条件"),
-                EditorStyles.boldLabel);
-            EditorGUI.indentLevel++;
-            float triggerIndent = EditorGUI.indentLevel * 15f;
-
-            if (targetType == RuleTarget.GameObject)
-            {
-                int triggerIdx = _sp_matchActive.boolValue ? 0 : 1;
-                EditorGUILayout.BeginHorizontal();
-                GUILayout.Space(triggerIndent);
-                int newTrigger = GUILayout.Toolbar(triggerIdx, new[] { "条件式が真", "条件式が偽" });
-                EditorGUILayout.EndHorizontal();
-                if (newTrigger != triggerIdx)
-                {
-                    _sp_matchActive.boolValue   = (newTrigger == 0);
-                    _sp_unmatchActive.boolValue = (newTrigger == 1);
-                }
-            }
-            else
-            {
-                int triggerIdx = (_sp_matchValue.floatValue > _sp_unmatchValue.floatValue) ? 0 : 1;
-                EditorGUILayout.BeginHorizontal();
-                GUILayout.Space(triggerIndent);
-                int newTrigger = GUILayout.Toolbar(triggerIdx, new[] { "条件式が真", "条件式が偽" });
-                EditorGUILayout.EndHorizontal();
-                if (newTrigger != triggerIdx)
-                {
-                    float tmp = _sp_matchValue.floatValue;
-                    _sp_matchValue.floatValue   = _sp_unmatchValue.floatValue;
-                    _sp_unmatchValue.floatValue = tmp;
-                }
-
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.PrefixLabel("真の時の値");
-                _sp_matchValue.floatValue = EditorGUILayout.Slider(_sp_matchValue.floatValue, 0f, 100f);
-                EditorGUILayout.EndHorizontal();
-
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.PrefixLabel("偽の時の値");
-                _sp_unmatchValue.floatValue = EditorGUILayout.Slider(_sp_unmatchValue.floatValue, 0f, 100f);
-                EditorGUILayout.EndHorizontal();
-            }
-
-            EditorGUI.indentLevel--;
-            EditorGUILayout.Space(4);
         }
 
         // ─── ヘルパー ───
