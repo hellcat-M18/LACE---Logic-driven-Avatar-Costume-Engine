@@ -40,6 +40,13 @@ namespace Lace.Runtime
         [Tooltip("パラメータを保持するか（Saved）")]
         public bool parameterSaved = true;
 
+        /// <summary>
+        /// CostumeItem の親ヒエラルキーを元に、サブメニュー階層を自動生成するか。
+        /// 有効な場合、installTargetMenu と menuPath が未整備でも非破壊でサブメニューを作成する。
+        /// </summary>
+        [Tooltip("親ヒエラルキーを元にサブメニュー階層を自動生成します")]
+        public bool autoCreateMenuPath;
+
         /// <summary>メニュー階層パス（例: "Costume/Upper"）。空ならインストール先直下に配置</summary>
         [Tooltip("メニュー階層パス（例: Costume/Upper）。空ならインストール先直下")]
         public string menuPath;
@@ -47,6 +54,10 @@ namespace Lace.Runtime
         /// <summary>インストール先の既存メニュー（null ならルートメニュー）</summary>
         [Tooltip("インストール先のメニュー。空ならアバターのルートメニュー")]
         public VRCExpressionsMenu installTargetMenu;
+
+        /// <summary>メニューの配置先フォルダ（null ならルートメニュー直下）</summary>
+        [Tooltip("メニューフォルダ。空ならルートメニュー直下")]
+        public LaceMenuFolder menuFolder;
 
         /// <summary>メニューアイコン</summary>
         [Tooltip("メニューアイコン")]
@@ -86,6 +97,7 @@ namespace Lace.Runtime
         private void Reset()
         {
             parameterName = gameObject.name;
+            autoCreateMenuPath = true;
         }
 
         // ─── 条件一致時 ───

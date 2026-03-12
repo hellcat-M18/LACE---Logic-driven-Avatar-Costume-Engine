@@ -34,8 +34,10 @@ namespace Lace.Editor
         private SerializedProperty _sp_defaultValue;
         private SerializedProperty _sp_parameterSynced;
         private SerializedProperty _sp_parameterSaved;
+        private SerializedProperty _sp_autoCreateMenuPath;
         private SerializedProperty _sp_menuPath;
         private SerializedProperty _sp_installTargetMenu;
+        private SerializedProperty _sp_menuFolder;
         private SerializedProperty _sp_icon;
         private SerializedProperty _sp_targetObjects;
         private SerializedProperty _sp_target;
@@ -51,13 +53,20 @@ namespace Lace.Editor
         // ─── 新規作成フォーム ───
         private bool _showCreateForm;
         private string _newItemName = "";
-        private int _newInstallTargetIndex;
-        private List<MenuEntry> _menuEntries;
+        private FolderEntry _newCreateEntry;
 
-        private struct MenuEntry
+        // ─── フォルダピッカー ───
+        private List<FolderEntry> _folderEntries;
+        private string _newFolderInputKey;
+        private string _newFolderName = "";
+        private int _newFolderParentIndex;
+
+        private struct FolderEntry
         {
             public string Path;
-            public VRCExpressionsMenu Menu;
+            public LaceMenuFolder Folder;           // 非 null = LACE フォルダ
+            public VRCExpressionsMenu ExistingMenu; // 非 null = 既存メニュー
+            // 両方 null = ルート
         }
 
         [MenuItem("Tools/LACE/Dashboard", false, 0)]
@@ -84,6 +93,7 @@ namespace Lace.Editor
         {
             RefreshAvatars();
             RefreshItems();
+            _folderEntries = null;
             Repaint();
         }
 
@@ -122,7 +132,7 @@ namespace Lace.Editor
             _avatarIndex = _selectedAvatar != null
                 ? Mathf.Max(0, Array.IndexOf(_avatarsInScene, _selectedAvatar))
                 : 0;
-            _menuEntries = null; // リビルドさせる
+            _folderEntries = null;
             RefreshItems();
         }
 
@@ -145,16 +155,6 @@ namespace Lace.Editor
                 _expandedItem = _items[0];
         }
 
-        private List<MenuEntry> GetMenuEntries()
-        {
-            if (_menuEntries != null) return _menuEntries;
-            _menuEntries = new List<MenuEntry>();
-            _menuEntries.Add(new MenuEntry { Path = "(ルート)", Menu = null });
-            if (_selectedAvatar != null && _selectedAvatar.expressionsMenu != null)
-                CollectMenuHierarchy(_selectedAvatar.expressionsMenu, "", _menuEntries);
-            return _menuEntries;
-        }
-
         /// <summary>展開中アイテムの SerializedObject とプロパティ群を確保する。</summary>
         private void EnsureExpandedSO()
         {
@@ -167,8 +167,10 @@ namespace Lace.Editor
             _sp_defaultValue      = _expandedSO.FindProperty("defaultValue");
             _sp_parameterSynced   = _expandedSO.FindProperty("parameterSynced");
             _sp_parameterSaved    = _expandedSO.FindProperty("parameterSaved");
+            _sp_autoCreateMenuPath = _expandedSO.FindProperty("autoCreateMenuPath");
             _sp_menuPath          = _expandedSO.FindProperty("menuPath");
             _sp_installTargetMenu = _expandedSO.FindProperty("installTargetMenu");
+            _sp_menuFolder        = _expandedSO.FindProperty("menuFolder");
             _sp_icon              = _expandedSO.FindProperty("icon");
             _sp_targetObjects     = _expandedSO.FindProperty("targetObjects");
             _sp_target            = _expandedSO.FindProperty("target");
@@ -429,15 +431,7 @@ namespace Lace.Editor
                     new GUIContent("メニュー名", "空欄なら選択オブジェクトの名前を使用します。"),
                     _newItemName);
 
-                // インストール先
-                var entries = GetMenuEntries();
-                var labels = new string[entries.Count];
-                for (int i = 0; i < entries.Count; i++)
-                    labels[i] = entries[i].Path;
-                _newInstallTargetIndex = EditorGUILayout.Popup(
-                    "インストール先",
-                    Mathf.Clamp(_newInstallTargetIndex, 0, entries.Count - 1),
-                    labels);
+                _newCreateEntry = DrawFolderPickerValue("メニュー階層", _newCreateEntry, "create");
 
                 EditorGUILayout.Space(4);
 
@@ -492,14 +486,8 @@ namespace Lace.Editor
 
             var item = Undo.AddComponent<CostumeItem>(go);
             item.parameterName = go.name;
-
-            // インストール先
-            var entries = GetMenuEntries();
-            if (entries.Count > 0)
-            {
-                var entry = entries[Mathf.Clamp(_newInstallTargetIndex, 0, entries.Count - 1)];
-                item.installTargetMenu = entry.Menu;
-            }
+            item.menuFolder = _newCreateEntry.Folder;
+            item.installTargetMenu = _newCreateEntry.ExistingMenu;
 
             // 制御対象
             item.target = RuleTarget.GameObject;
@@ -509,6 +497,7 @@ namespace Lace.Editor
 
             // リセット
             _newItemName = "";
+            _newCreateEntry = default;
             RefreshItems();
 
             EditorGUIUtility.PingObject(go);
@@ -559,31 +548,12 @@ namespace Lace.Editor
                 _sp_parameterSaved.boolValue  = GUILayout.Toggle(_sp_parameterSaved.boolValue,  "保持",   "Button", GUILayout.Width(40));
                 EditorGUILayout.EndHorizontal();
 
-                DrawMenuInstallTargetInline();
-                EditorGUILayout.PropertyField(_sp_menuPath, new GUIContent("サブメニューパス"));
+                DrawFolderPicker("メニュー階層", _sp_menuFolder, _sp_installTargetMenu, "detail");
                 EditorGUILayout.PropertyField(_sp_icon, new GUIContent("アイコン"));
             }
 
             EditorGUI.indentLevel--;
             EditorGUILayout.Space(4);
-        }
-
-        private void DrawMenuInstallTargetInline()
-        {
-            var entries = GetMenuEntries();
-            var currentMenu = (VRCExpressionsMenu)_sp_installTargetMenu.objectReferenceValue;
-            int selectedIndex = 0;
-            for (int i = 0; i < entries.Count; i++)
-            {
-                if (entries[i].Menu == currentMenu) { selectedIndex = i; break; }
-            }
-
-            var labels = new string[entries.Count];
-            for (int i = 0; i < entries.Count; i++) labels[i] = entries[i].Path;
-
-            int newIndex = EditorGUILayout.Popup("インストール先", selectedIndex, labels);
-            if (newIndex != selectedIndex)
-                _sp_installTargetMenu.objectReferenceValue = entries[newIndex].Menu;
         }
 
         // ─ セクション2: 制御対象 ─
@@ -1205,25 +1175,216 @@ namespace Lace.Editor
             return s;
         }
 
-        private static void CollectMenuHierarchy(
-            VRCExpressionsMenu menu, string parentPath,
-            List<MenuEntry> entries, int depth = 0)
+        // ─── フォルダピッカー ───
+
+        private List<FolderEntry> GetFolderEntries()
+        {
+            if (_folderEntries != null) return _folderEntries;
+            _folderEntries = new List<FolderEntry>();
+            _folderEntries.Add(new FolderEntry { Path = "(ルート)" });
+            if (_selectedAvatar != null)
+            {
+                // LACE フォルダ
+                var folders = _selectedAvatar.GetComponentsInChildren<LaceMenuFolder>(true);
+                foreach (var folder in folders)
+                {
+                    _folderEntries.Add(new FolderEntry
+                    {
+                        Path = "[LACE] " + BuildFolderPath(folder),
+                        Folder = folder,
+                    });
+                }
+                // 既存メニュー (VRCExpressionsMenu)
+                if (_selectedAvatar.expressionsMenu != null)
+                    CollectExistingMenuEntries(_selectedAvatar.expressionsMenu, "", _folderEntries);
+            }
+            return _folderEntries;
+        }
+
+        private string BuildFolderPath(LaceMenuFolder folder)
+        {
+            var segments = new List<string>();
+            var current = folder.transform;
+            while (current != null && current != _selectedAvatar.transform)
+            {
+                if (current.GetComponent<LaceMenuFolder>() != null)
+                    segments.Add(current.name);
+                current = current.parent;
+            }
+            segments.Reverse();
+            return string.Join("/", segments);
+        }
+
+        private static void CollectExistingMenuEntries(
+            VRCExpressionsMenu menu, string parentPath, List<FolderEntry> entries, int depth = 0)
         {
             if (menu == null || depth > 10) return;
-
             foreach (var control in menu.controls)
             {
-                if (control.type != VRCExpressionsMenu.Control.ControlType.SubMenu)
-                    continue;
+                if (control.type != VRCExpressionsMenu.Control.ControlType.SubMenu) continue;
                 if (control.subMenu == null) continue;
-
                 var path = string.IsNullOrEmpty(parentPath)
                     ? control.name
                     : $"{parentPath}/{control.name}";
-
-                entries.Add(new MenuEntry { Path = path, Menu = control.subMenu });
-                CollectMenuHierarchy(control.subMenu, path, entries, depth + 1);
+                entries.Add(new FolderEntry
+                {
+                    Path = "[既存] " + path,
+                    ExistingMenu = control.subMenu,
+                });
+                CollectExistingMenuEntries(control.subMenu, path, entries, depth + 1);
             }
+        }
+
+        /// <summary>SerializedProperty 版: 詳細パネル用</summary>
+        private void DrawFolderPicker(
+            string label, SerializedProperty folderProp, SerializedProperty installTargetProp, string pickerKey)
+        {
+            var entries = GetFolderEntries();
+            var currentFolder = (LaceMenuFolder)folderProp.objectReferenceValue;
+            var currentMenu   = (VRCExpressionsMenu)installTargetProp.objectReferenceValue;
+            int selectedIndex = FindEntryIndex(entries, currentFolder, currentMenu);
+
+            var labels = BuildFolderLabels(entries);
+
+            EditorGUILayout.BeginHorizontal();
+            int newIndex = EditorGUILayout.Popup(label, selectedIndex, labels);
+            if (newIndex != selectedIndex)
+            {
+                var e = entries[newIndex];
+                folderProp.objectReferenceValue       = e.Folder;
+                installTargetProp.objectReferenceValue = e.ExistingMenu;
+            }
+
+            if (GUILayout.Button("+", GUILayout.Width(24)))
+            {
+                _newFolderInputKey = pickerKey;
+                _newFolderName = "";
+                _newFolderParentIndex = newIndex;
+            }
+            EditorGUILayout.EndHorizontal();
+
+            if (_newFolderInputKey == pickerKey)
+            {
+                var created = DrawNewFolderInput();
+                if (created != null)
+                {
+                    folderProp.objectReferenceValue        = created;
+                    installTargetProp.objectReferenceValue = null;
+                }
+            }
+        }
+
+        /// <summary>値返却版: 新規作成フォーム用</summary>
+        private FolderEntry DrawFolderPickerValue(string label, FolderEntry current, string pickerKey)
+        {
+            var entries = GetFolderEntries();
+            int selectedIndex = FindEntryIndex(entries, current.Folder, current.ExistingMenu);
+            var labels = BuildFolderLabels(entries);
+
+            var result = current;
+
+            EditorGUILayout.BeginHorizontal();
+            int newIndex = EditorGUILayout.Popup(label, selectedIndex, labels);
+            if (newIndex != selectedIndex)
+                result = entries[newIndex];
+
+            if (GUILayout.Button("+", GUILayout.Width(24)))
+            {
+                _newFolderInputKey = pickerKey;
+                _newFolderName = "";
+                _newFolderParentIndex = newIndex;
+            }
+            EditorGUILayout.EndHorizontal();
+
+            if (_newFolderInputKey == pickerKey)
+            {
+                var created = DrawNewFolderInput();
+                if (created != null)
+                    result = new FolderEntry { Path = "[LACE] " + BuildFolderPath(created), Folder = created };
+            }
+
+            return result;
+        }
+
+        private static int FindEntryIndex(
+            List<FolderEntry> entries, LaceMenuFolder folder, VRCExpressionsMenu existingMenu)
+        {
+            for (int i = 0; i < entries.Count; i++)
+            {
+                if (folder != null && entries[i].Folder == folder) return i;
+                if (existingMenu != null && entries[i].ExistingMenu == existingMenu) return i;
+            }
+            return 0;
+        }
+
+        private static string[] BuildFolderLabels(List<FolderEntry> entries)
+        {
+            var labels = new string[entries.Count];
+            for (int i = 0; i < entries.Count; i++) labels[i] = entries[i].Path;
+            return labels;
+        }
+
+        /// <summary>
+        /// インライン新規フォルダ作成UI。作成されたら LaceMenuFolder を返す。それ以外は null。
+        /// </summary>
+        private LaceMenuFolder DrawNewFolderInput()
+        {
+            LaceMenuFolder created = null;
+
+            EditorGUI.indentLevel++;
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+
+            _newFolderName = EditorGUILayout.TextField("フォルダ名", _newFolderName);
+
+            var entries = GetFolderEntries();
+            var parentLabels = BuildFolderLabels(entries);
+            _newFolderParentIndex = EditorGUILayout.Popup("親フォルダ",
+                Mathf.Clamp(_newFolderParentIndex, 0, entries.Count - 1), parentLabels);
+
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+
+            using (new EditorGUI.DisabledScope(string.IsNullOrWhiteSpace(_newFolderName)))
+            {
+                if (GUILayout.Button("作成", GUILayout.Width(56)))
+                {
+                    var parentFolder = entries[Mathf.Clamp(_newFolderParentIndex, 0, entries.Count - 1)].Folder;
+                    created = CreateMenuFolder(_newFolderName.Trim(), parentFolder);
+                    _newFolderInputKey = null;
+                    _folderEntries = null;
+                }
+            }
+
+            if (GUILayout.Button("×", GUILayout.Width(24)))
+                _newFolderInputKey = null;
+
+            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.EndVertical();
+            EditorGUI.indentLevel--;
+
+            return created;
+        }
+
+        private LaceMenuFolder CreateMenuFolder(string folderName, LaceMenuFolder parentFolder)
+        {
+            Transform parent;
+            if (parentFolder != null)
+                parent = parentFolder.transform;
+            else
+                parent = EnsureParent(_selectedAvatar.transform);
+
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("Create LACE Menu Folder");
+
+            var go = new GameObject(folderName);
+            Undo.RegisterCreatedObjectUndo(go, "Create LACE Menu Folder");
+            go.transform.SetParent(parent, false);
+
+            var folder = Undo.AddComponent<LaceMenuFolder>(go);
+
+            Undo.CollapseUndoOperations(group);
+            return folder;
         }
     }
 }

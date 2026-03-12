@@ -1,6 +1,9 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.2] - 2026-03-12
+
+### Added
+- メニュー作成時に新しくSubMenuを作成する機能を実装(LACE Menu Folder)
 
 ### Removed
 - パッケージrepo内の VPM 一覧生成用ファイルを削除

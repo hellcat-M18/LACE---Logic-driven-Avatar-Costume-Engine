@@ -57,7 +57,7 @@ namespace Lace.Editor
                 var menuPathLookup = BuildMenuPathLookup(avatarDesc != null ? avatarDesc.expressionsMenu : null);
 
                 // Modular Avatar でメニュー生成
-                GenerateMenuItems(container.transform, items, menuPathLookup);
+                GenerateMenuItems(container.transform, items, menuPathLookup, avatarRoot.transform);
 
                 // Modular Avatar でパラメータ宣言
                 GenerateParameters(container, items);
@@ -81,6 +81,10 @@ namespace Lace.Editor
                 // 自動メッシュマージが正常に機能する。
                 foreach (var item in items)
                     UnityEngine.Object.DestroyImmediate(item);
+
+                var folders = avatarRoot.GetComponentsInChildren<LaceMenuFolder>(true);
+                foreach (var folder in folders)
+                    UnityEngine.Object.DestroyImmediate(folder);
             });
         }
 
@@ -90,28 +94,46 @@ namespace Lace.Editor
         private static void GenerateMenuItems(
             Transform container,
             CostumeItem[] items,
-            Dictionary<int, string> menuPathLookup)
+            Dictionary<int, string> menuPathLookup,
+            Transform avatarRoot)
         {
-            // installTargetMenu ごとにグルーピングして MenuInstaller を作る
-            var groups = new Dictionary<int, Transform>(); // instanceID → Transform
+            var groups = new Dictionary<int, Transform>();
 
+            // ─── LaceMenuFolder 階層を先に生成（ヒエラルキー順を保持）───
+            var allFolders = avatarRoot.GetComponentsInChildren<LaceMenuFolder>(true);
+            var folderMap = new Dictionary<LaceMenuFolder, Transform>();
+
+            foreach (var folder in allFolders)
+                EnsureFolderGenerated(folder, folderMap, groups, container, avatarRoot);
+
+            // ─── CostumeItem ごとにトグルメニューを配置 ───
             foreach (var item in items)
             {
                 if (!item.generateMenuItem) continue;
                 if (string.IsNullOrEmpty(item.parameterName)) continue;
 
-                // installTargetMenu ごとのコンテナを取得/作成
-                var groupRoot = GetOrCreateInstallGroup(
-                    container, item.installTargetMenu, groups);
+                Transform parent;
 
-                // menuPath に基づいて親を探す／作る
-                var normalizedPath = NormalizeMenuPath(
-                    item.menuPath,
-                    item.installTargetMenu,
-                    menuPathLookup);
-                var parent = GetOrCreateMenuParent(groupRoot, normalizedPath);
+                if (item.menuFolder != null)
+                {
+                    // 新方式: LaceMenuFolder ベース
+                    if (!folderMap.TryGetValue(item.menuFolder, out parent))
+                        parent = GetOrCreateInstallGroup(container, null, groups);
+                }
+                else if (item.installTargetMenu != null || !string.IsNullOrEmpty(item.menuPath))
+                {
+                    // レガシー: installTargetMenu + menuPath
+                    var groupRoot = GetOrCreateInstallGroup(
+                        container, item.installTargetMenu, groups);
+                    var normalizedPath = NormalizeMenuPath(
+                        item.menuPath, item.installTargetMenu, menuPathLookup);
+                    parent = GetOrCreateMenuParent(groupRoot, normalizedPath);
+                }
+                else
+                {
+                    parent = GetOrCreateInstallGroup(container, null, groups);
+                }
 
-                // メニューアイテム用 GameObject
                 var menuGo = new GameObject(item.parameterName);
                 menuGo.transform.SetParent(parent, false);
 
@@ -130,6 +152,49 @@ namespace Lace.Editor
                 menuItem.isSynced = item.parameterSynced;
                 menuItem.isSaved = item.parameterSaved;
             }
+        }
+
+        /// <summary>
+        /// LaceMenuFolder の生成済み SubMenu Transform を返す。未生成なら再帰的に生成する。
+        /// </summary>
+        private static Transform EnsureFolderGenerated(
+            LaceMenuFolder folder,
+            Dictionary<LaceMenuFolder, Transform> folderMap,
+            Dictionary<int, Transform> installGroups,
+            Transform container,
+            Transform avatarRoot)
+        {
+            if (folderMap.TryGetValue(folder, out var existing)) return existing;
+
+            // ヒエラルキー上の祖先に LaceMenuFolder があれば親として使う
+            LaceMenuFolder parentFolder = null;
+            var current = folder.transform.parent;
+            while (current != null && current != avatarRoot)
+            {
+                parentFolder = current.GetComponent<LaceMenuFolder>();
+                if (parentFolder != null) break;
+                current = current.parent;
+            }
+
+            Transform parentTransform;
+            if (parentFolder != null)
+                parentTransform = EnsureFolderGenerated(
+                    parentFolder, folderMap, installGroups, container, avatarRoot);
+            else
+                parentTransform = GetOrCreateInstallGroup(container, null, installGroups);
+
+            var go = new GameObject(folder.gameObject.name);
+            go.transform.SetParent(parentTransform, false);
+
+            var subMenu = go.AddComponent<ModularAvatarMenuItem>();
+            subMenu.Control = new VRCExpressionsMenu.Control
+            {
+                type = VRCExpressionsMenu.Control.ControlType.SubMenu,
+            };
+            subMenu.MenuSource = SubmenuSource.Children;
+
+            folderMap[folder] = go.transform;
+            return go.transform;
         }
 
         /// <summary>
